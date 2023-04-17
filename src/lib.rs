@@ -31,8 +31,35 @@ pub struct Init {
     pub node_ids: Vec<String>,
 }
 
-pub trait StateMachine<P> {
-    fn step(&mut self, input: Message<P>, output: &mut StdoutLock) -> anyhow::Result<()>;
+pub trait Id {
+    fn get_msg_id(&self) -> usize;
+    fn increment_msg_id(&mut self);
+}
+
+pub trait Node<P>: Id {
+    fn handle(&mut self, input: P) -> Option<P>;
+
+    fn reply(&mut self, input: Message<P>, output: &mut StdoutLock) -> anyhow::Result<()>
+    where
+        P: Serialize,
+    {
+        let reply_payload = self.handle(input.body.payload);
+        if let Some(reply_payload) = reply_payload {
+            let reply = Message {
+                src: input.dest,
+                dest: input.src,
+                body: Body {
+                    msg_id: Some(self.get_msg_id()),
+                    in_reply_to: input.body.msg_id,
+                    payload: reply_payload,
+                },
+            };
+            serde_json::to_writer(&mut *output, &reply).context("serialize response to init")?;
+            output.write_all(b"\n").context("write trailing newline")?;
+            self.increment_msg_id();
+        }
+        Ok(())
+    }
 
     fn from_init(input: Message<InitPayload>, output: &mut StdoutLock) -> anyhow::Result<Self>
     where
@@ -61,10 +88,27 @@ pub trait StateMachine<P> {
     }
 }
 
+#[allow(dead_code)]
+pub struct BaseNode {
+    pub id: usize,
+    pub node_id: String,
+    pub node_ids: Vec<String>,
+}
+
+impl From<Init> for BaseNode {
+    fn from(init: Init) -> Self {
+        Self {
+            id: 1,
+            node_id: init.node_id,
+            node_ids: init.node_ids,
+        }
+    }
+}
+
 pub fn event_loop<S, P>() -> anyhow::Result<()>
 where
-    S: StateMachine<P> + From<Init>,
-    P: DeserializeOwned,
+    S: Node<P> + From<Init> + Id,
+    P: DeserializeOwned + Serialize,
 {
     let stdin = std::io::stdin().lock();
     let mut stdin = stdin.lines();
@@ -88,7 +132,7 @@ where
         let input: Message<P> = serde_json::from_str(&input)
             .context("Maelstrom input from STDIN could not be deserialized")?;
         state
-            .step(input, &mut stdout)
+            .reply(input, &mut stdout)
             .context("Node step function failed")?;
     }
 

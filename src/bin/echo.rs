@@ -1,8 +1,6 @@
 use maelstromrs::*;
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::io::{StdoutLock, Write};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
@@ -12,39 +10,24 @@ enum Payload {
     EchoOk { echo: String },
 }
 
-struct Node {
+#[allow(dead_code)]
+struct EchoNode {
     id: usize,
-    #[allow(dead_code)]
     node_id: String,
-    #[allow(dead_code)]
     node_ids: Vec<String>,
 }
 
-impl StateMachine<Payload> for Node {
-    fn step(&mut self, input: Message<Payload>, output: &mut StdoutLock) -> anyhow::Result<()> {
-        match input.body.payload {
-            Payload::Echo { echo } => {
-                let reply = Message {
-                    src: input.dest,
-                    dest: input.src,
-                    body: Body {
-                        msg_id: Some(self.id),
-                        in_reply_to: input.body.msg_id,
-                        payload: Payload::EchoOk { echo },
-                    },
-                };
-                serde_json::to_writer(&mut *output, &reply)
-                    .context("serialize response to init")?;
-                output.write_all(b"\n").context("write trailing newline")?;
-                self.id += 1;
-            }
-            Payload::EchoOk { .. } => {}
-        }
-        Ok(())
+impl Id for EchoNode {
+    fn get_msg_id(&self) -> usize {
+        self.id
+    }
+
+    fn increment_msg_id(&mut self) {
+        self.id += 1;
     }
 }
 
-impl From<Init> for Node {
+impl From<Init> for EchoNode {
     fn from(init: Init) -> Self {
         Self {
             id: 1,
@@ -54,6 +37,20 @@ impl From<Init> for Node {
     }
 }
 
+impl Node<Payload> for EchoNode {
+    fn handle(&mut self, input: Payload) -> Option<Payload> {
+        let payload: Option<Payload> = match input {
+            Payload::Echo { echo } => Some(Payload::EchoOk { echo }),
+            _ => None,
+        };
+        if let Some(payload) = payload {
+            Some(payload)
+        } else {
+            None
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
-    event_loop::<Node, Payload>()
+    event_loop::<EchoNode, Payload>()
 }
