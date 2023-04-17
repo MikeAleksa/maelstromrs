@@ -1,6 +1,7 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::io::{BufRead, StdoutLock, Write};
+use serde_json::{Deserializer, Value};
+use std::io::{BufReader, BufWriter, StdoutLock, Write};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message<P> {
@@ -39,7 +40,11 @@ pub trait Id {
 pub trait Node<P>: Id {
     fn handle(&mut self, input: P) -> Option<P>;
 
-    fn reply(&mut self, input: Message<P>, output: &mut StdoutLock) -> anyhow::Result<()>
+    fn reply(
+        &mut self,
+        input: Message<P>,
+        output: &mut BufWriter<StdoutLock<'_>>,
+    ) -> anyhow::Result<()>
     where
         P: Serialize,
     {
@@ -61,7 +66,10 @@ pub trait Node<P>: Id {
         Ok(())
     }
 
-    fn from_init(input: Message<InitPayload>, output: &mut StdoutLock) -> anyhow::Result<Self>
+    fn from_init(
+        input: Message<InitPayload>,
+        output: &mut BufWriter<StdoutLock<'_>>,
+    ) -> anyhow::Result<Self>
     where
         Self: Sized + From<Init>,
     {
@@ -88,48 +96,32 @@ pub trait Node<P>: Id {
     }
 }
 
-#[allow(dead_code)]
-pub struct BaseNode {
-    pub id: usize,
-    pub node_id: String,
-    pub node_ids: Vec<String>,
-}
-
-impl From<Init> for BaseNode {
-    fn from(init: Init) -> Self {
-        Self {
-            id: 1,
-            node_id: init.node_id,
-            node_ids: init.node_ids,
-        }
-    }
-}
-
-pub fn event_loop<S, P>() -> anyhow::Result<()>
+pub fn event_loop<S, P>() -> Result<()>
 where
     S: Node<P> + From<Init> + Id,
     P: DeserializeOwned + Serialize,
 {
-    let stdin = std::io::stdin().lock();
-    let mut stdin = stdin.lines();
-    let mut stdout = std::io::stdout().lock();
+    let stdin = BufReader::new(std::io::stdin());
+    let mut stdin = Deserializer::from_reader(stdin).into_iter::<Value>();
 
-    // read the first line from stdin and deserialize it as an Init message
+    let stdout = std::io::stdout();
+    let mut stdout = BufWriter::new(stdout.lock());
+
+    // read the first message from stdin and deserialize it as an Init message
     let init = stdin
         .next()
         .context("Maelstrom input from STDIN could not be deserialized")?
         .context("Maelstrom input from STDIN could not be deserialized")?;
-
-    let init: Message<InitPayload> = serde_json::from_str(&init)
+    let init: Message<InitPayload> = serde_json::from_value(init)
         .context("Maelstrom input from STDIN could not be deserialized")?;
 
     // initialize the state machine
     let mut state = S::from_init(init, &mut stdout).context("Node initialization failed")?;
 
-    // loop over the remaining lines from stdin and deserialize them as Messages
-    for input in stdin {
+    // loop over the remaining messages from stdin and deserialize them as Messages
+    while let Some(input) = stdin.next() {
         let input = input.context("Maelstrom input from STDIN could not be deserialized")?;
-        let input: Message<P> = serde_json::from_str(&input)
+        let input: Message<P> = serde_json::from_value(input)
             .context("Maelstrom input from STDIN could not be deserialized")?;
         state
             .reply(input, &mut stdout)
