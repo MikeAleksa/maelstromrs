@@ -1,7 +1,7 @@
 use maelstromrs::*;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Topology {
@@ -16,7 +16,7 @@ enum Payload {
     Broadcast { message: i32 },
     BroadcastOk {},
     Read {},
-    ReadOk { messages: Vec<i32> },
+    ReadOk { messages: HashSet<i32> },
     Topology { topology: Topology },
     TopologyOk {},
 }
@@ -26,10 +26,14 @@ struct BroadcastNode {
     id: usize,
     node_id: String,
     node_ids: Vec<String>,
-    memory: Vec<i32>,
+    memory: HashSet<i32>,
 }
 
 impl Id for BroadcastNode {
+    fn get_node_id(&self) -> String {
+        self.node_id.clone()
+    }
+
     fn get_msg_id(&self) -> usize {
         self.id
     }
@@ -45,16 +49,31 @@ impl From<Init> for BroadcastNode {
             id: 1,
             node_id: init.node_id,
             node_ids: init.node_ids,
-            memory: Vec::new(),
+            memory: HashSet::new(),
         }
     }
 }
 
-impl Node<Payload> for BroadcastNode {  
+impl Node<Payload> for BroadcastNode {
     fn handle(&mut self, input: Payload) -> Option<Payload> {
         let payload: Option<Payload> = match input {
             Payload::Broadcast { message } => {
-                self.memory.push(message);
+                // check if message is already in memory
+                if self.memory.contains(&message) {
+                    return Some(Payload::BroadcastOk {});
+                }
+
+                // add message to memory
+                self.memory.insert(message);
+
+                // broadcast to all nodes
+                let node_ids = self.node_ids.clone();
+                let self_id = self.node_id.clone();
+                for node_id in node_ids {
+                    if node_id != self_id {
+                        self.send(&node_id, Payload::Broadcast { message });
+                    }
+                }
                 Some(Payload::BroadcastOk {})
             }
             Payload::Read { .. } => Some(Payload::ReadOk {

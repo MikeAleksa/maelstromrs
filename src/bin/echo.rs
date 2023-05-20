@@ -18,6 +18,10 @@ struct EchoNode {
 }
 
 impl Id for EchoNode {
+    fn get_node_id(&self) -> String {
+        self.node_id.clone()
+    }
+
     fn get_msg_id(&self) -> usize {
         self.id
     }

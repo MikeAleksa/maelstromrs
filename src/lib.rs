@@ -32,12 +32,27 @@ pub struct Init {
 }
 
 pub trait Id {
+    fn get_node_id(&self) -> String;
     fn get_msg_id(&self) -> usize;
     fn increment_msg_id(&mut self);
 }
 
 pub trait Node<P>: Id {
     fn handle(&mut self, input: P) -> Option<P>;
+
+    fn send(&mut self, dest: &str, payload: P) -> Message<P> {
+        let msg = Message {
+            src: self.get_node_id(),
+            dest: dest.to_string(),
+            body: Body {
+                msg_id: Some(self.get_msg_id()),
+                in_reply_to: None,
+                payload,
+            },
+        };
+        self.increment_msg_id();
+        msg
+    }
 
     fn reply(&mut self, input: Message<P>, output: &mut StdoutLock) -> anyhow::Result<()>
     where
@@ -87,6 +102,37 @@ pub trait Node<P>: Id {
         Ok(state)
     }
 }
+
+// #[allow(dead_code)]
+// pub struct NodeHandler {
+//     id: usize,
+//     node_id: String,
+//     node_ids: Vec<String>,
+// }
+
+// impl Id for NodeHandler {
+//     fn get_node_id(&self) -> String {
+//         self.node_id.clone()
+//     }
+
+//     fn get_msg_id(&self) -> usize {
+//         self.id
+//     }
+
+//     fn increment_msg_id(&mut self) {
+//         self.id += 1;
+//     }
+// }
+
+// impl From<Init> for NodeHandler {
+//     fn from(init: Init) -> Self {
+//         Self {
+//             id: 1,
+//             node_id: init.node_id,
+//             node_ids: init.node_ids,
+//         }
+//     }
+// }
 
 pub fn event_loop<S, P>() -> anyhow::Result<()>
 where
